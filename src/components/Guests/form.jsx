@@ -6,6 +6,7 @@ import 'bootstrap/dist/css/bootstrap.min.css';
 import { Modal, Button, Navbar, Nav, Container } from 'react-bootstrap';
 import DatePicker from 'react-datepicker';
 import 'react-datepicker/dist/react-datepicker.css';
+import { differenceInDays } from 'date-fns';
 
 const GuestAdd = () => {
     const [guest, setGuest] = useState({
@@ -25,6 +26,23 @@ const GuestAdd = () => {
     const [showModal, setShowModal] = useState(false);
     const [modalMessage, setModalMessage] = useState('');
     const navigate = useNavigate();
+
+
+    const handleCheckinChange = (date) => {
+        setGuest((prev) => {
+            const checkout = prev.checkout;
+            const quantidadeDiaria = checkout && date ? differenceInDays(checkout, date) : 0;
+            return { ...prev, checkin: date, quantidadeDiaria: quantidadeDiaria > 0 ? quantidadeDiaria : 0 };
+        });
+    };
+
+    const handleCheckoutChange = (date) => {
+        setGuest((prev) => {
+            const checkin = prev.checkin;
+            const quantidadeDiaria = checkin && date ? differenceInDays(date, checkin) : 0;
+            return { ...prev, checkout: date, quantidadeDiaria: quantidadeDiaria > 0 ? quantidadeDiaria : 0 };
+        });
+    };
 
     const validateCPF = (cpf) => {
         cpf = cpf.replace(/\D/g, '');
@@ -95,6 +113,7 @@ const GuestAdd = () => {
             }
 
             const receita = guest.quantidadeDiaria * guest.valorDiaria;
+            
             await addDoc(collection(db, 'guests'), { ...guest, receita });
             console.log("Hóspede adicionado:", { ...guest, receita });
             navigate('/guests');
@@ -209,15 +228,30 @@ const GuestAdd = () => {
                         onChange={(e) => setGuest({ ...guest, estado: e.target.value })}
                         placeholder=""
                     />
-
+                    <label className="form-label">Checkin</label>
+                    <br />
+                    <DatePicker
+                        className="form-control"
+                        selected={guest.checkin}
+                        onChange={handleCheckinChange}
+                        dateFormat="dd/MM/yyyy"
+                        placeholderText="Selecione uma data"
+                    /><br /><br />
+                    <label className="form-label">Check-out</label>
+                    <br />
+                    <DatePicker
+                        className="form-control"
+                        selected={guest.checkout}
+                        onChange={handleCheckoutChange}
+                        dateFormat="dd/MM/yyyy"
+                        placeholderText="Selecione uma data"
+                    /><br /><br />
                     <label className="form-label">Quantidade de diárias</label>
                     <input
                         type="number"
                         className="form-control"
                         value={guest.quantidadeDiaria}
-                        onChange={(e) => setGuest({ ...guest, quantidadeDiaria: Number(e.target.value) || 0 })}
-                        placeholder=""
-                        required
+                        readOnly
                     />
 
                     <label className="form-label">Valor da diária</label>

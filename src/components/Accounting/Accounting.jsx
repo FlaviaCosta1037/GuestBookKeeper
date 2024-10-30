@@ -1,34 +1,70 @@
 import React, { useState, useEffect } from 'react';
 import { db } from '../../services/firebase';
 import { collection, addDoc, getDocs, deleteDoc, doc } from 'firebase/firestore';
-import { useNavigate } from 'react-router-dom';
 import 'bootstrap/dist/css/bootstrap.min.css';
 import { Modal, Button, Navbar, Nav, Container } from 'react-bootstrap';
+import DatePicker from 'react-datepicker';
+import 'react-datepicker/dist/react-datepicker.css';
+import '../Accouting.css';
+import { Timestamp } from 'firebase/firestore';
+
+
+
 
 const Accounting = () => {
     const [entries, setEntries] = useState([]);
     const [expenses, setExpenses] = useState([]);
+    const [filteredEntries, setFilteredEntries] = useState([]);
+    const [filteredExpenses, setFilteredExpenses] = useState([]);
     const [totalRevenue, setTotalRevenue] = useState(0);
-    const [newExpense, setNewExpense] = useState({ descricao: '', valor: 0 });
-    const navigate = useNavigate();
-
+    const [newExpense, setNewExpense] = useState({ descricao: '', valor: 0, date: new Date() });
+    const [finalBalance, setFinalBalance] = useState(0);
     const [showModal, setShowModal] = useState(false);
     const [modalMessage, setModalMessage] = useState('');
+
+    const [startDate, setStartDate] = useState(null);
+    const [endDate, setEndDate] = useState(null);
+
+    const openModal = (message) => {
+        setModalMessage(message);
+        setShowModal(true);
+    };
+
+    const closeModal = () => {
+        setShowModal(false);
+        setModalMessage("");
+    };
 
     useEffect(() => {
         const fetchAccountingData = async () => {
             const guestsCollection = await getDocs(collection(db, 'guests'));
-            let totalRevenue = 0;
+            let revenue = 0;
             const entriesData = [];
 
             guestsCollection.forEach((doc) => {
                 const guest = doc.data();
                 if (guest.receita) {
-                    totalRevenue += guest.receita;
+                    revenue += guest.receita;
+
+                    let guestDate;
+
+                    // Verifique se guest.date é um Timestamp do Firestore
+                    if (guest.date && guest.date instanceof Timestamp) {
+                        guestDate = guest.date.toDate(); // Converte o timestamp para Date
+                    } else if (guest.date) {
+                        // Tente converter uma string em uma data
+                        guestDate = new Date(guest.date);
+                    } else {
+                        guestDate = new Date(); // Se não houver data, use a data atual
+                    }
+
+                    const isValidDate = !isNaN(guestDate.getTime()); // Verifica se a data é válida
+
                     entriesData.push({
                         tipo: 'Receita',
                         descricao: `Locatário: ${guest.nome}`,
                         valor: guest.receita,
+                        date: isValidDate ? guestDate : new Date(), // Usa guest.date se for válida, caso contrário, usa a data atual
                     });
                 }
             });
@@ -37,51 +73,82 @@ const Accounting = () => {
             const expensesData = [];
             expensesCollection.forEach((doc) => {
                 const expense = doc.data();
-                expensesData.push({ id: doc.id, ...expense }); // Adiciona o ID da despesa
+                expensesData.push({ id: doc.id, ...expense });
             });
 
             setEntries(entriesData);
             setExpenses(expensesData);
-            setTotalRevenue(totalRevenue);
+            setFilteredExpenses(expensesData);
+            setTotalRevenue(revenue);
         };
 
         fetchAccountingData();
     }, []);
 
+    useEffect(() => {
+        const totalExpenses = filteredExpenses.reduce((total, expense) => total + expense.valor, 0);
+        setFinalBalance(totalRevenue - totalExpenses);
+    }, [totalRevenue, filteredExpenses]);
+
     const handleAddExpense = async () => {
         if (newExpense.descricao && newExpense.valor > 0) {
             try {
-                // Adiciona despesa ao Firestore
-                const docRef = await addDoc(collection(db, 'expenses'), newExpense);
+                const expenseWithDate = {
+                    ...newExpense,
+                    date: newExpense.date ? newExpense.date : new Date() // Adiciona a data se não estiver definida
+                };
+                const docRef = await addDoc(collection(db, 'expenses'), expenseWithDate);
 
-                // Atualiza a lista de despesas localmente
-                setExpenses([...expenses, { id: docRef.id, ...newExpense }]);
+                setExpenses([...expenses, { id: docRef.id, ...expenseWithDate }]);
                 setTotalRevenue((prevRevenue) => prevRevenue - newExpense.valor);
-                setNewExpense({ descricao: '', valor: 0 }); // Limpa o formulário
+                setNewExpense({ descricao: '', valor: 0, date: new Date() });
+                setFilteredExpenses((prev) => [...prev, { id: docRef.id, ...expenseWithDate }]);
             } catch (error) {
                 console.error("Erro ao adicionar despesa:", error);
             }
         } else {
-            alert("Por favor, preencha todos os campos de despesa.");
+            openModal("Por favor, preencha todos os campos de despesa.");
         }
     };
 
-    const handleDeleteExpense = async (id, valor) => {
+    const handleDeleteExpense = async (id) => {
         try {
-            // Deleta despesa do Firestore
             await deleteDoc(doc(db, 'expenses', id));
-
-            // Atualiza a lista de despesas localmente
             setExpenses(expenses.filter(expense => expense.id !== id));
-            setTotalRevenue((prevRevenue) => prevRevenue + valor); // Atualiza o total de receitas
+            setFilteredExpenses(filteredExpenses.filter(expense => expense.id !== id));
         } catch (error) {
             console.error("Erro ao deletar despesa:", error);
         }
     };
+    const resetFilters = () => {
+        setStartDate(null);
+        setEndDate(null);
+        setFilteredExpenses(expenses);
+        setFilteredEntries(entries);
+    };
 
-    // Cálculo do balanço final
-    const totalExpenses = expenses.reduce((total, expense) => total + expense.valor, 0);
-    const finalBalance = totalRevenue - totalExpenses;
+    const handleFilterExpenses = () => {
+        if (startDate && endDate) {
+            const filteredExpenses = expenses.filter(expense => {
+                const expenseDate = expense.date?.seconds ? new Date(expense.date.seconds * 1000) : null;
+                return expenseDate && expenseDate >= startDate && expenseDate <= endDate;
+            });
+
+            const filteredEntries = entries.filter(entry => {
+                const entryDate = entry.date?.seconds ? new Date(entry.date.seconds * 1000) : null;
+                return entryDate && entryDate >= startDate && entryDate <= endDate;
+            });
+
+            setFilteredExpenses(filteredExpenses);
+            setFilteredEntries(filteredEntries);
+
+            if (filteredExpenses.length === 0 && filteredEntries.length === 0) {
+                openModal("Nenhuma despesa ou receita encontrada no período selecionado.");
+            }
+        } else {
+            openModal("Por favor, selecione um intervalo de datas.");
+        }
+    };
 
     return (
         <div className="d-flex flex-column min-vh-100">
@@ -98,13 +165,42 @@ const Accounting = () => {
                 <h2 className="text-center mb-4">Resumo Contábil</h2>
 
                 <p><strong>Total de Receitas:</strong> R$ {totalRevenue.toFixed(2)}</p>
-                <p><strong>Total de Despesas:</strong> R$ {totalExpenses.toFixed(2)}</p>
+                <div className="mb-3">
+                    <label>Filtrar despesas por período:</label>
+                    <div className="d-flex">
+                        <DatePicker
+                            selected={startDate}
+                            onChange={(date) => setStartDate(date)}
+                            placeholderText="Data inicial"
+                            className="form-control me-2"
+                        />
+                        <DatePicker
+                            selected={endDate}
+                            onChange={(date) => setEndDate(date)}
+                            placeholderText="Data final"
+                            className="form-control me-2"
+                        />
+                        <button onClick={handleFilterExpenses} className="btn btn-primary">Confirmar</button>
+                        <button onClick={resetFilters} className="btn btn-secondary ms-2">Resetar Busca</button>
+                    </div>
+                </div>
+                <p><strong>Total de Despesas:</strong> R$ {filteredExpenses.reduce((total, expense) => total + expense.valor, 0).toFixed(2)}</p>
                 <p><strong>Balanço Final:</strong> R$ {finalBalance.toFixed(2)}</p>
 
                 <h3>Adicionar Despesa</h3>
                 <div className="card mb-4">
                     <div className="card-body">
                         <div className="mb-3">
+                            <label className="form-label">Data - registro</label>
+                            <br />
+                            <DatePicker
+                                className="form-control"
+                                value={newExpense.date}
+                                onChange={(date) => setNewExpense({ ...newExpense, date })}
+                                dateFormat="dd/MM/yyyy"
+                                placeholderText="Selecione uma data"
+                            />
+                            <br /><br />
                             <label className="form-label">Descrição</label>
                             <input
                                 type="text"
@@ -130,37 +226,38 @@ const Accounting = () => {
 
                 <h3>Detalhes de Entradas e Saídas</h3>
                 <ul className="list-group">
-                    {entries.map((entry, index) => (
+                    {filteredEntries.map((entry, index) => (
                         <li key={index} className="list-group-item">
                             <strong>{entry.tipo}</strong>: {entry.descricao} - R$ {entry.valor.toFixed(2)}
+                            <br />
+                            <small>Data: {entry.date ? new Date(entry.date.seconds * 1000).toLocaleDateString() : 'Data não disponível'}</small>
                         </li>
                     ))}
-                    {expenses.map((expense) => (
+                    {filteredExpenses.map((expense) => (
                         <li key={expense.id} className="list-group-item d-flex justify-content-between align-items-center">
                             <span>
                                 <strong>Despesa</strong>: {expense.descricao} - R$ {expense.valor.toFixed(2)}
+                                <br />
+                                <small>Data: {expense.date ? new Date(expense.date.seconds * 1000).toLocaleDateString() : 'Data não disponível'}</small>
                             </span>
-                            <button className="btn btn-danger btn-sm" onClick={() => handleDeleteExpense(expense.id, expense.valor)}>Deletar</button>
+                            <button className="btn btn-danger btn-sm" onClick={() => handleDeleteExpense(expense.id)}>Deletar</button>
                         </li>
                     ))}
                 </ul>
 
+
             </Container>
-            <Modal show={showModal} onHide={() => setShowModal(false)}>
+            <Modal show={showModal} onHide={closeModal}>
                 <Modal.Header closeButton>
                     <Modal.Title>Atenção</Modal.Title>
                 </Modal.Header>
                 <Modal.Body>{modalMessage}</Modal.Body>
                 <Modal.Footer>
-                    <Button variant="secondary" onClick={() => setShowModal(false)}>
+                    <Button variant="secondary" onClick={closeModal}>
                         Fechar
                     </Button>
                 </Modal.Footer>
             </Modal>
-            <br />
-            <footer className="mt-auto bg-dark text-light py-3 text-center">
-                <p className="mb-0">&copy; 2023 Sistema de Registro de Hóspedes</p>
-            </footer>
         </div>
     );
 };
